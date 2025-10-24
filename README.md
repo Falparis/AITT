@@ -1,4 +1,4 @@
-# 🧾 AITTsoroban — On‑Chain AI Transparency Verification System
+# 🧾 AITT — On‑Chain AI Transparency Verification System
 
 A complete end-to-end platform for **secure document verification** using the **Soroban smart contract**, **ExpressJS backend**, and **React dashboard**.
 
