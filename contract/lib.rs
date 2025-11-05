@@ -1,640 +1,407 @@
-use anchor_lang::prelude::*;
-use anchor_spl::{
-    associated_token::AssociatedToken,
-    token::{self, Mint, Token, TokenAccount, Transfer},
-};
+#![cfg_attr(not(test), no_std)]
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String};
 
-declare_id!("6iVSKKvzjmfJi6WH1rw3rKb44pLizpKFwg81Bu3YgwhH");
+#[contract]
+pub struct Contract;
 
-// Supply & allocation
-const INITIAL_SUPPLY: u64 = 4_000_000_000_000; // reward tokens added at init
-const PER_SUB_ALLOCATION: u64 = 20_000_000_000; // reward tokens per subscription
-const PER_SUB_PRICE_USDC: u64 = 10_000_000; // 100 USDC (6 decimals)
-                                            // const INITIAL_SUPPLY: u64 = 40_000_000; // reward tokens added at init
-                                            // const PER_SUB_ALLOCATION: u64 = 200_000; // reward tokens per subscription
-                                            // const PER_SUB_PRICE_USDC: u64 = 100_000_000; // 100 USDC (6 decimals)
+#[derive(Clone)]
+#[contracttype]
+enum DataKey {
+    /// Instance-scoped owner (no rent burden like maps of docs)
+    Owner,
+    /// Persistent map: Document keyed by its hash string
+    Document(String),
+    /// Persistent map: Whitelist keyed by Address (value = bool)
+    Whitelist(Address),
+}
 
-// Time constants
-const SECS_PER_MONTH: i64 = 60;
-// const SECS_PER_MONTH: i64 = 30 * 24 * 60 * 60;
+/// Stored document data
+#[derive(Clone)]
+#[contracttype]
+pub struct Document {
+    pub name: String,
+    pub hash: String,
+    pub timestamp: u64,
+    pub added_by: Address,
+}
 
-// Vesting config
-const CLIFF_MONTHS: u8 = 6; // 100% unlock after 6 months
-const GRADUAL_CLIFF_MONTHS: u8 = 5; // initial lock period
-const GRADUAL_TRANCHE_MONTHS: u8 = 1; // monthly tranches
-const GRADUAL_TRANCHES: u8 = 4; // 4 tranches → 25% each
+/// Result used by verify_document (adds a boolean flag)
+#[derive(Clone)]
+#[contracttype]
+pub struct VerifiedDocument {
+    pub name: String,
+    pub hash: String,
+    pub timestamp: u64,
+    pub added_by: Address,
+    pub verified_document: bool,
+}
 
-#[program]
-pub mod rewards_pool_real_token {
+#[contractimpl]
+impl Contract {
+    /// Initialize the contract with an owner. Must be called once right after deployment.
+    pub fn init(env: Env, owner: Address) {
+        if env.storage().instance().has(&DataKey::Owner) {
+            panic!("already initialized");
+        }
+        env.storage().instance().set(&DataKey::Owner, &owner);
+    }
+
+    /// Internal: fetch owner, ensure they authorized this call
+    fn assert_owner(env: &Env) -> Address {
+        let owner: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Owner)
+            .expect("contract not initialized");
+        owner.require_auth();
+        owner
+    }
+   /// Require that `actor` is the owner OR is whitelisted; otherwise panic.
+fn assert_owner_or_whitelisted_actor(env: &Env, actor: &Address) {
+    // Must have signed
+    actor.require_auth();
+
+    // Load owner
+    let owner: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Owner)
+        .expect("contract not initialized");
+
+    // Owner always allowed
+    if actor == &owner {
+        return;
+    }
+
+    // Otherwise must be whitelisted
+    let allowed = env
+        .storage()
+        .persistent()
+        .get::<_, bool>(&DataKey::Whitelist(actor.clone()))
+        .unwrap_or(false);
+
+    if !allowed {
+        panic!("not authorized: only owner or whitelisted address");
+    }
+}
+
+
+
+    // ---------- WHITELIST ----------
+
+    /// Owner-only: add address to whitelist (value stored as `true`)
+    pub fn whitelist_address(env: Env, address: Address) {
+        let _owner = Self::assert_owner(&env);
+        let allow = true;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Whitelist(address), &allow);
+    }
+
+    /// Read-only: check if address is whitelisted (missing => false)
+    pub fn is_whitelisted(env: Env, address: Address) -> bool {
+        env.storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Whitelist(address))
+            .unwrap_or(false)
+    }
+   pub fn owner_address(env: Env) -> Address {
+    env.storage()
+        .instance()
+        .get::<_, Address>(&DataKey::Owner)
+        .expect("contract not initialized")
+}
+
+    /// Owner-only: remove address from whitelist (delete key)
+    pub fn remove_from_whitelist(env: Env, address: Address) {
+        let _owner = Self::assert_owner(&env);
+        env.storage().persistent().remove(&DataKey::Whitelist(address));
+    }
+
+    // ---------- DOCUMENTS ----------
+
+    /// Store a document (ONLY OWNER and whitelist).
+    pub fn store_document(env: Env, actor: Address, name: String, hash: String) {
+
+          let key = DataKey::Document(hash.clone());
+
+        if env.storage().persistent().has(&key) {
+            panic!("Document already registered");
+        }
+
+    // Enforce permission
+    Self::assert_owner_or_whitelisted_actor(&env, &actor);
+        let timestamp: u64 = env.ledger().timestamp();
+        let doc = Document {
+            name,
+            hash: hash.clone(),
+            timestamp,
+            added_by: actor,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Document(hash), &doc);
+    }
+
+    /// Read a document by hash (helper; anyone can call).
+    pub fn read_document(env: Env, hash: String) -> Option<Document> {
+        env.storage().persistent().get(&DataKey::Document(hash))
+    }
+
+    /// Verify a document by its hash.
+    pub fn verify_document(env: Env, hash: String) -> Option<VerifiedDocument> {
+        let doc: Option<Document> = env.storage().persistent().get(&DataKey::Document(hash));
+        doc.map(|d| VerifiedDocument {
+            name: d.name,
+            hash: d.hash,
+            timestamp: d.timestamp,
+            added_by: d.added_by,
+            verified_document: true,
+        })
+    }
+    // transfer Ownership
+    pub fn transfer_ownership(env: Env, new_owner: Address) {
+    // Ensure the *current* owner authorized this call
+    let current_owner: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Owner)
+        .expect("contract not initialized");
+    current_owner.require_auth();
+
+    // Optional: prevent no-op/self-transfer
+    if new_owner == current_owner {
+        panic!("new owner must be different");
+    }
+
+    env.storage().instance().set(&DataKey::Owner, &new_owner);
+}
+}
+
+#[cfg(test)]
+mod tests {
     use super::*;
+    use soroban_sdk::{Address, Env, String};
+    use soroban_sdk::testutils::{Address as _, Ledger}; // trait import
 
-    /// Initialize the pool with reward + USDC vaults.
-    pub fn init_pool(ctx: Context<InitPool>) -> Result<()> {
-        let pool = &mut ctx.accounts.pool;
-
-        pool.authority = ctx.accounts.authority.key();
-        pool.reward_mint = ctx.accounts.reward_mint.key();
-        pool.usdc_mint = ctx.accounts.usdc_mint.key();
-        pool.reward_vault = ctx.accounts.reward_vault.key();
-        pool.usdc_vault = ctx.accounts.usdc_vault.key();
-
-        // Accounting
-        pool.total_reserved = 0;
-        pool.total_claimed = 0;
-
-        pool.next_sub_index = 0;
-        pool.paused = false;
-        pool.bump = ctx.bumps.pool;
-
-        // Schedule config
-        pool.cliff_months = CLIFF_MONTHS;
-        pool.gradual_cliff_months = GRADUAL_CLIFF_MONTHS;
-        pool.gradual_tranche_months = GRADUAL_TRANCHE_MONTHS;
-        pool.gradual_tranches = GRADUAL_TRANCHES;
-
-        // Snapshot SOL balance (optional)
-        pool.usdc_balance = 0;
-
-        // Pull initial reward tokens from authority → pool vault
-        if INITIAL_SUPPLY > 0 {
-            let cpi_accounts = Transfer {
-                from: ctx.accounts.authority_reward_ata.to_account_info(),
-                to: ctx.accounts.reward_vault.to_account_info(),
-                authority: ctx.accounts.authority.to_account_info(),
-            };
-            let cpi_ctx =
-                CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
-            token::transfer(cpi_ctx, INITIAL_SUPPLY)?;
-        }
-
-        emit!(PoolInitialized {
-            authority: pool.authority,
-            reward_mint: pool.reward_mint,
-            usdc_mint: pool.usdc_mint,
-            initial_supply: INITIAL_SUPPLY,
-            per_sub_allocation: PER_SUB_ALLOCATION,
-            per_sub_price_usdc: PER_SUB_PRICE_USDC,
-            cliff_months: pool.cliff_months,
-            gradual_cliff_months: pool.gradual_cliff_months,
-            gradual_tranche_months: pool.gradual_tranche_months,
-            gradual_tranches: pool.gradual_tranches,
+    fn setup(env: &Env) -> (Address, Address) {
+        let owner: Address = Address::generate(env);
+        let contract_addr: Address = env.register_contract(None, Contract);
+        let client = ContractClient::new(env, &contract_addr);
+        client.init(&owner);
+        env.ledger().with_mut(|li| {
+            li.timestamp = 1_800_000_000;
+            li.sequence_number += 1;
         });
-        Ok(())
+        (owner, contract_addr)
     }
 
-    /// Subscribe: pay USDC and reserve reward allocation.
-    pub fn subscribe(ctx: Context<Subscribe>, kind: SubKind) -> Result<()> {
-        let pool = &mut ctx.accounts.pool;
-        require!(!pool.paused, ErrorCode::Paused);
+    #[test]
+    #[should_panic] // require_auth should fail without mocked auth
+    fn only_owner_can_store_panics_without_auth() {
+        let env = Env::default();
+        let (owner, contract_addr) = setup(&env);
+        let client = ContractClient::new(&env, &contract_addr);
 
-        // Check reward vault balance
-        let reward_vault_amount = ctx.accounts.reward_vault.amount;
-        let available = reward_vault_amount
-            .checked_sub(pool.total_reserved)
-            .and_then(|x| x.checked_sub(pool.total_claimed))
-            .ok_or(ErrorCode::MathOverflow)?;
-        require!(
-            PER_SUB_ALLOCATION <= available,
-            ErrorCode::InsufficientPoolBalance
+        let name = String::from_str(&env, "Confidential.pdf");
+        let hash = String::from_str(&env, "abc123");
+
+        // Now requires the actor argument; without mock auth this should panic.
+        client.store_document(&owner, &name, &hash);
+    }
+
+    #[test]
+    fn store_and_verify_document_with_owner_auth() {
+        let env = Env::default();
+        let (owner, contract_addr) = setup(&env);
+        let client = ContractClient::new(&env, &contract_addr);
+        env.mock_all_auths();
+
+        let name = String::from_str(&env, "OfferLetter.pdf");
+        let hash = String::from_str(
+            &env,
+            "2d8f1bd06c6f0c2c2f2b2b4a7b3a9b2e4a5b8d6f9e0c1d3f4a6b7c8d9e0f1a2b",
         );
 
-        // Charge USDC
-        if PER_SUB_PRICE_USDC > 0 {
-            let cpi_accounts = Transfer {
-                from: ctx.accounts.user_usdc_ata.to_account_info(),
-                to: ctx.accounts.usdc_vault.to_account_info(),
-                authority: ctx.accounts.user.to_account_info(),
-            };
-            let cpi_ctx =
-                CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
-            token::transfer(cpi_ctx, PER_SUB_PRICE_USDC)?;
-            pool.usdc_balance += PER_SUB_PRICE_USDC;
-        }
+        // pass owner as the authorized actor
+        client.store_document(&owner, &name, &hash);
 
-        let now = Clock::get()?.unix_timestamp;
+        let stored = client.read_document(&hash).expect("document should exist");
+        assert_eq!(stored.name, name);
+        assert_eq!(stored.hash, hash);
+        assert_eq!(stored.added_by, owner);
+        assert!(stored.timestamp > 0);
 
-        let s = &mut ctx.accounts.subscription;
-        s.pool = pool.key();
-        s.user = ctx.accounts.user.key();
-        s.amount = PER_SUB_ALLOCATION;
-        s.start_at = now;
-        s.kind = kind as u8;
-        s.claimed = false;
-        s.claimed_amount = 0;
-        s.index = pool.next_sub_index;
-
-        // Unlock time calculation
-        s.unlock_at = match kind {
-            SubKind::Cliff => now
-                .checked_add(months_to_secs(pool.cliff_months))
-                .ok_or(ErrorCode::MathOverflow)?,
-            SubKind::Gradual => now
-                .checked_add(
-                    months_to_secs(pool.gradual_cliff_months)
-                        .checked_add(months_to_secs(pool.gradual_tranche_months))
-                        .ok_or(ErrorCode::MathOverflow)?,
-                ).ok_or(ErrorCode::MathOverflow)?,
-        };
-
-        pool.total_reserved = pool
-            .total_reserved
-            .checked_add(PER_SUB_ALLOCATION)
-            .ok_or(ErrorCode::MathOverflow)?;
-        pool.next_sub_index = pool
-            .next_sub_index
-            .checked_add(1)
-            .ok_or(ErrorCode::MathOverflow)?;
-
-        emit!(Subscribed {
-            user: s.user,
-            amount: s.amount,
-            unlock_at: s.unlock_at,
-            sub_index: s.index,
-            kind: s.kind,
-            price_usdc: PER_SUB_PRICE_USDC,
-        });
-        Ok(())
+        let verified = client.verify_document(&hash).expect("should verify");
+        assert_eq!(verified.name, name);
+        assert_eq!(verified.hash, hash);
+        assert_eq!(verified.added_by, owner);
+        assert!(verified.timestamp > 0);
+        assert!(verified.verified_document);
     }
 
-    /// Claim vested reward tokens.
-    pub fn claim(ctx: Context<Claim>) -> Result<()> {
-        let pool = &mut ctx.accounts.pool;
-        let s = &mut ctx.accounts.subscription;
-        let user = &ctx.accounts.user;
-        require!(!pool.paused, ErrorCode::Paused);
-        require!(user.key() == s.user, ErrorCode::WrongClaimAccount);
-        require!(s.pool == pool.key(), ErrorCode::WrongClaimAccount);
+    #[test]
+    fn store_and_verify_multiple_documents_with_owner_auth() {
+        let env = Env::default();
+        let (owner, contract_addr) = setup(&env);
+        let client = ContractClient::new(&env, &contract_addr);
+        env.mock_all_auths();
 
-        let now = Clock::get()?.unix_timestamp;
-        let vested = vested_amount(pool, s, now)?;
-        require!(vested > s.claimed_amount, ErrorCode::NothingToClaim);
-
-        let delta = vested
-            .checked_sub(s.claimed_amount)
-            .ok_or(ErrorCode::MathOverflow)?;
-
-        // PDA signer
-        let seeds: &[&[u8]] = &[b"pool2", pool.reward_mint.as_ref()];
-        let bump = [pool.bump];
-        let signer: &[&[&[u8]]] = &[&[seeds[0], seeds[1], &bump]];
-
-        let cpi_accounts = Transfer {
-            from: ctx.accounts.reward_vault.to_account_info(),
-            to: ctx.accounts.user_reward_ata.to_account_info(),
-            authority: pool.to_account_info(),
-        };
-        let cpi_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            cpi_accounts,
-            signer,
+        let name = String::from_str(&env, "OfferLetter.pdf");
+        let hash = String::from_str(
+            &env,
+            "2d8f1bd06c6f0c2c2f2b2b4a7b3a9b2e4a5b8d6f9e0c1d3f4a6b7c8d9e0f1a2b",
         );
-        token::transfer(cpi_ctx, delta)?;
-
-        // Update subscription + pool accounting
-        s.claimed_amount = vested;
-        if s.claimed_amount >= s.amount {
-            s.claimed = true;
-        }
-
-        pool.total_reserved = pool
-            .total_reserved
-            .checked_sub(delta)
-            .ok_or(ErrorCode::MathOverflow)?;
-        pool.total_claimed = pool
-            .total_claimed
-            .checked_add(delta)
-            .ok_or(ErrorCode::MathOverflow)?;
-
-        emit!(Claimed {
-            user: s.user,
-            amount: delta
-        });
-        Ok(())
-    }
-
-    /// Admin: pause/unpause subscriptions.
-    pub fn set_paused(ctx: Context<SetPaused>, paused: bool) -> Result<()> {
-        let pool = &mut ctx.accounts.pool;
-        require_keys_eq!(
-            pool.authority,
-            ctx.accounts.authority.key(),
-            ErrorCode::Unauthorized
-        );
-        pool.paused = paused;
-        emit!(PauseToggled { paused });
-        Ok(())
-    }
-
-    /// Admin: withdraw USDC from pool's USDC vault.
-    pub fn admin_withdraw_usdc(ctx: Context<AdminWithdrawUsdc>, amount: u64) -> Result<()> {
-        let pool = &mut ctx.accounts.pool;
-        require!(amount > 0, ErrorCode::ZeroAmount);
-        require_keys_eq!(
-            pool.authority,
-            ctx.accounts.authority.key(),
-            ErrorCode::Unauthorized
+        let hash1 = String::from_str(
+            &env,
+            "3d8f1bd06c6f0c2c2f2b2b4a7b3a9b2e4a5b8d6f9e0c1d3f4a6b7c8d9e0f1a2b",
         );
 
-        // PDA signer seeds
-        let seeds: &[&[u8]] = &[b"pool2", pool.reward_mint.as_ref()];
-        let bump = [pool.bump];
-        let signer: &[&[&[u8]]] = &[&[seeds[0], seeds[1], &bump]];
+        // actor is required; use owner so no whitelist setup needed
+        client.store_document(&owner, &name, &hash);
+        client.store_document(&owner, &name, &hash1);
 
-        // Transfer USDC from pool vault → admin ATA
-        let cpi_accounts = Transfer {
-            from: ctx.accounts.usdc_vault.to_account_info(),
-            to: ctx.accounts.authority_usdc_ata.to_account_info(),
-            authority: pool.to_account_info(),
-        };
-        let cpi_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            cpi_accounts,
-            signer,
+        let stored = client.read_document(&hash).expect("document should exist");
+        let stored1 = client.read_document(&hash1).expect("document should exist");
+        assert_eq!(stored.name, name);
+        assert_eq!(stored.hash, hash);
+        assert_eq!(stored1.hash, hash1);
+    }
+
+    #[test]
+    fn whitelist_add_two_and_remove_one_with_owner_auth() {
+        let env = Env::default();
+        let (_owner, contract_addr) = setup(&env);
+        let client = ContractClient::new(&env, &contract_addr);
+        // Allow require_auth to pass in tests
+        env.mock_all_auths();
+
+        // two random addresses
+        let a1 = Address::generate(&env);
+        let a2 = Address::generate(&env);
+
+        // add both to whitelist (owner-only method; mock_all_auths lets it pass)
+        client.whitelist_address(&a1);
+        client.whitelist_address(&a2);
+
+        // check both are whitelisted
+        assert!(client.is_whitelisted(&a1), "a1 should be whitelisted");
+        assert!(client.is_whitelisted(&a2), "a2 should be whitelisted");
+
+        // remove one (a1) and check states
+        client.remove_from_whitelist(&a1);
+        assert!(!client.is_whitelisted(&a1), "a1 should NOT be whitelisted anymore");
+        assert!(client.is_whitelisted(&a2), "a2 should remain whitelisted");
+    }
+     #[test]
+    fn store_document_by_whitelisted_user() {
+        let env = Env::default();
+        let (owner, contract_addr) = setup(&env);
+        let client = ContractClient::new(&env, &contract_addr);
+        env.mock_all_auths();
+
+        // create & whitelist a non-owner user
+        let user = Address::generate(&env);
+        client.whitelist_address(&user);
+
+        let name = String::from_str(&env, "Whitelisted-Doc.pdf");
+        let hash = String::from_str(
+            &env,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         );
 
-        token::transfer(cpi_ctx, amount)?;
-        pool.usdc_balance = pool
-            .usdc_balance
-            .checked_sub(amount)
-            .ok_or(ErrorCode::MathOverflow)?;
+        // should succeed because `user` is whitelisted
+        client.store_document(&user, &name, &hash);
 
-        emit!(AdminUsdcWithdrawn {
-            to: ctx.accounts.authority.key(),
-            amount
-        });
-        Ok(())
+        let stored = client.read_document(&hash).expect("document should exist");
+        assert_eq!(stored.name, name);
+        assert_eq!(stored.hash, hash);
+        assert_eq!(stored.added_by, user, "added_by must be the whitelisted caller");
+        assert!(stored.timestamp > 0);
     }
 
-    /// Close subscription after full claim.
-    pub fn close_subscription(_ctx: Context<CloseSubscription>) -> Result<()> {
-        Ok(())
+    #[test]
+    #[should_panic(expected = "not authorized: only owner or whitelisted address")]
+    fn store_document_by_non_whitelisted_user_panics() {
+        let env = Env::default();
+        let (_owner, contract_addr) = setup(&env);
+        let client = ContractClient::new(&env, &contract_addr);
+        env.mock_all_auths(); // make require_auth() pass so we fail specifically on whitelist
+
+        // random user NOT added to whitelist
+        let user = Address::generate(&env);
+
+        let name = String::from_str(&env, "Not-Whitelisted-Doc.pdf");
+        let hash = String::from_str(
+            &env,
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        );
+
+        // should panic because user is neither owner nor whitelisted
+        client.store_document(&user, &name, &hash);
     }
+
+#[test]
+#[should_panic(expected = "Document already registered")]
+fn store_document_duplicate_hash_panics() {
+    let env = Env::default();
+    let (owner, contract_addr) = setup(&env);
+    let client = ContractClient::new(&env, &contract_addr);
+    env.mock_all_auths();
+
+    let name1 = String::from_str(&env, "Doc-v1.pdf");
+    let name2 = String::from_str(&env, "Doc-v2.pdf");
+    let hash = String::from_str(
+        &env,
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    );
+
+    // First insert succeeds
+    client.store_document(&owner, &name1, &hash);
+
+    // Second insert with same hash MUST panic
+    client.store_document(&owner, &name2, &hash);
 }
 
-/* ---------------- Vesting Logic ---------------- */
-
-#[derive(AnchorDeserialize, AnchorSerialize, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum SubKind {
-    Cliff = 0,
-    Gradual = 1,
+    #[test]
+fn reads_owner_address() {
+    let env = Env::default();
+    let (owner, contract_addr) = setup(&env);
+    let client = ContractClient::new(&env, &contract_addr);
+    let got = client.owner_address();
+    assert_eq!(got, owner);
 }
+    #[test]
+    fn transfer_ownership_with_owner_auth() {
+        let env = Env::default();
+        let (owner, contract_addr) = setup(&env);
+        let client = ContractClient::new(&env, &contract_addr);
 
-fn months_to_secs(m: u8) -> i64 {
-    (m as i64) * SECS_PER_MONTH
-}
+        // allow require_auth to pass for the owner
+        env.mock_all_auths();
 
-fn vested_amount(pool: &GlobalPool, s: &Subscription, now: i64) -> Result<u64> {
-    let amount = s.amount;
-    let start = s.start_at;
+        // transfer to a new owner address
+        let new_owner = Address::generate(&env);
+        client.transfer_ownership(&new_owner);
 
-    match s.kind() {
-        SubKind::Cliff => {
-            let cliff_time = start
-                .checked_add(months_to_secs(pool.cliff_months))
-                .ok_or(ErrorCode::MathOverflow)?;
-            if now >= cliff_time {
-                Ok(amount)
-            } else {
-                Err(ErrorCode::StillLocked.into())
-            }
-        }
-        SubKind::Gradual => {
-            let first_tranche_time = start
-                .checked_add(months_to_secs(pool.gradual_cliff_months))
-                .and_then(|t| t.checked_add(months_to_secs(pool.gradual_tranche_months)))
-                .ok_or(ErrorCode::MathOverflow)?;
-
-            if now < first_tranche_time {
-                return Err(ErrorCode::StillLocked.into());
-            }
-
-            let elapsed = now
-                .checked_sub(first_tranche_time)
-                .ok_or(ErrorCode::MathOverflow)?;
-            let interval_secs = months_to_secs(pool.gradual_tranche_months);
-            let tranches = (elapsed / interval_secs) as u64 + 1;
-            let vested_tranches = tranches.min(pool.gradual_tranches as u64);
-
-            let vested = amount
-                .checked_mul(vested_tranches)
-                .and_then(|x| x.checked_div(pool.gradual_tranches as u64))
-                .ok_or(ErrorCode::MathOverflow)?;
-
-            Ok(vested)
-        }
+        // verify ownership changed
+        // If you implemented `owner_address`, use that:
+        let got = client.owner_address();
+        assert_eq!(got, new_owner, "ownership should be transferred to new_owner");
     }
-}
 
-/* ---------------- Accounts ---------------- */
+    #[test]
+    #[should_panic] // should fail because owner did not authorize
+    fn transfer_ownership_without_owner_auth_panics() {
+        let env = Env::default();
+        let (_owner, contract_addr) = setup(&env);
+        let client = ContractClient::new(&env, &contract_addr);
 
-#[derive(Accounts)]
-pub struct InitPool<'info> {
-    #[account(mut)]
-    pub authority: Signer<'info>,
+        // DO NOT mock auth here so require_auth() fails
+        let new_owner = Address::generate(&env);
 
-    pub reward_mint: Account<'info, Mint>,
-    pub usdc_mint: Account<'info, Mint>,
-
-    #[account(
-        init_if_needed,
-        payer = authority,
-        space = 8 + GlobalPool::SIZE,
-        seeds = [b"pool2", reward_mint.key().as_ref()],
-        bump,
-    )]
-    pub pool: Account<'info, GlobalPool>,
-
-    #[account(
-        mut,
-        constraint = reward_vault.mint == reward_mint.key(),
-        constraint = reward_vault.owner == pool.key(),
-    )]
-    pub reward_vault: Account<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        constraint = usdc_vault.mint == usdc_mint.key(),
-        constraint = usdc_vault.owner == pool.key(),
-    )]
-    pub usdc_vault: Account<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        constraint = authority_reward_ata.mint == reward_mint.key(),
-        constraint = authority_reward_ata.owner == authority.key(),
-    )]
-    pub authority_reward_ata: Account<'info, TokenAccount>,
-
-    pub token_program: Program<'info, Token>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
-    pub system_program: Program<'info, System>,
-}
-
-// #[derive(Accounts)]
-// pub struct FundPool<'info> {
-//     #[account(mut, has_one = authority)]
-//     pub pool: Account<'info, GlobalPool>,
-//     #[account(mut)]
-//     pub authority: Signer<'info>,
-
-//     #[account(
-//         mut,
-//         constraint = reward_vault.key() == pool.reward_vault,
-//         constraint = reward_vault.owner == pool.key(),
-//         constraint = reward_vault.mint == pool.reward_mint,
-//     )]
-//     pub reward_vault: Account<'info, TokenAccount>,
-
-//     #[account(
-//         mut,
-//         constraint = authority_reward_ata.mint == pool.reward_mint,
-//         constraint = authority_reward_ata.owner == authority.key(),
-//     )]
-//     pub authority_reward_ata: Account<'info, TokenAccount>,
-
-//     pub token_program: Program<'info, Token>,
-// }
-
-#[derive(Accounts)]
-pub struct Subscribe<'info> {
-    #[account(mut)]
-    pub user: Signer<'info>,
-
-    #[account(mut)]
-    pub pool: Account<'info, GlobalPool>,
-
-    #[account(
-        mut,
-        constraint = reward_vault.key() == pool.reward_vault,
-        constraint = reward_vault.mint == pool.reward_mint,
-        constraint = reward_vault.owner == pool.key(),
-    )]
-    pub reward_vault: Account<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        constraint = usdc_vault.key() == pool.usdc_vault,
-        constraint = usdc_vault.mint == pool.usdc_mint,
-        constraint = usdc_vault.owner == pool.key(),
-    )]
-    pub usdc_vault: Account<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        constraint = user_usdc_ata.mint == pool.usdc_mint,
-        constraint = user_usdc_ata.owner == user.key(),
-    )]
-    pub user_usdc_ata: Account<'info, TokenAccount>,
-
-    #[account(
-        init,
-        payer = user,
-        space = 8 + Subscription::SIZE,
-        seeds = [
-            b"subscription",
-            pool.key().as_ref(),
-            &pool.next_sub_index.to_le_bytes()
-        ],
-        bump
-    )]
-    pub subscription: Account<'info, Subscription>,
-
-    pub token_program: Program<'info, Token>,
-    pub system_program: Program<'info, System>,
-}
-
-#[derive(Accounts)]
-pub struct Claim<'info> {
-    #[account(mut)]
-    pub pool: Account<'info, GlobalPool>,
-
-    #[account(mut)]
-    pub subscription: Account<'info, Subscription>,
-
-    #[account(mut)]
-    pub user: Signer<'info>,
-
-    #[account(
-        mut,
-        constraint = reward_vault.key() == pool.reward_vault,
-        constraint = reward_vault.mint == pool.reward_mint,
-        constraint = reward_vault.owner == pool.key(),
-    )]
-    pub reward_vault: Account<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        constraint = user_reward_ata.mint == pool.reward_mint,
-        constraint = user_reward_ata.owner == user.key(),
-    )]
-    pub user_reward_ata: Account<'info, TokenAccount>,
-
-    pub token_program: Program<'info, Token>,
-}
-
-#[derive(Accounts)]
-pub struct SetPaused<'info> {
-    #[account(mut, has_one = authority)]
-    pub pool: Account<'info, GlobalPool>,
-    pub authority: Signer<'info>,
-}
-
-#[derive(Accounts)]
-pub struct AdminWithdrawUsdc<'info> {
-    #[account(mut, has_one = authority)]
-    pub pool: Account<'info, GlobalPool>,
-    #[account(mut)]
-    pub authority: Signer<'info>,
-
-    #[account(
-        mut,
-        constraint = usdc_vault.key() == pool.usdc_vault,
-        constraint = usdc_vault.mint == pool.usdc_mint,
-        constraint = usdc_vault.owner == pool.key(),
-    )]
-    pub usdc_vault: Account<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        constraint = authority_usdc_ata.mint == pool.usdc_mint,
-        constraint = authority_usdc_ata.owner == authority.key(),
-    )]
-    pub authority_usdc_ata: Account<'info, TokenAccount>,
-
-    pub token_program: Program<'info, Token>,
-}
-
-#[derive(Accounts)]
-pub struct CloseSubscription<'info> {
-    #[account(mut, close = user, constraint = subscription.claimed @ ErrorCode::NotClaimed)]
-    pub subscription: Account<'info, Subscription>,
-    #[account(mut)]
-    pub user: Signer<'info>,
-}
-
-/* ---------------- State ---------------- */
-
-#[account]
-pub struct GlobalPool {
-    pub authority: Pubkey,
-
-    pub reward_mint: Pubkey,
-    pub reward_vault: Pubkey,
-    pub usdc_mint: Pubkey,
-    pub usdc_vault: Pubkey,
-
-    pub total_reserved: u64,
-    pub total_claimed: u64,
-
-    pub next_sub_index: u64,
-    pub paused: bool,
-    pub bump: u8,
-    pub usdc_balance: u64,
-
-    pub cliff_months: u8,
-    pub gradual_cliff_months: u8,
-    pub gradual_tranche_months: u8,
-    pub gradual_tranches: u8,
-}
-impl GlobalPool {
-    pub const SIZE: usize = 32 + 32 + 32 + 32 + 32 + 8 + 8 + 8 + 1 + 1 + 8 + 1 + 1 + 1 + 1;
-}
-
-#[account]
-pub struct Subscription {
-    pub pool: Pubkey,
-    pub user: Pubkey,
-    pub amount: u64,
-    pub unlock_at: i64,
-    pub claimed: bool,
-    pub claimed_amount: u64,
-    pub index: u64,
-    pub start_at: i64,
-    pub kind: u8,
-}
-impl Subscription {
-    pub const SIZE: usize = 32 + 32 + 8 + 8 + 1 + 8 + 8 + 8 + 1;
-
-    pub fn kind(&self) -> SubKind {
-        match self.kind {
-            0 => SubKind::Cliff,
-            1 => SubKind::Gradual,
-            _ => SubKind::Cliff,
-        }
+        // This should panic: current owner didn't authorize this call
+        client.transfer_ownership(&new_owner);
     }
-}
 
-/* ---------------- Events ---------------- */
-
-#[event]
-pub struct PoolInitialized {
-    pub authority: Pubkey,
-    pub reward_mint: Pubkey,
-    pub usdc_mint: Pubkey,
-    pub initial_supply: u64,
-    pub per_sub_allocation: u64,
-    pub per_sub_price_usdc: u64,
-    pub cliff_months: u8,
-    pub gradual_cliff_months: u8,
-    pub gradual_tranche_months: u8,
-    pub gradual_tranches: u8,
-}
-
-#[event]
-pub struct PoolFunded {
-    pub amount: u64,
-}
-
-#[event]
-pub struct Subscribed {
-    pub user: Pubkey,
-    pub amount: u64,
-    pub unlock_at: i64,
-    pub sub_index: u64,
-    pub kind: u8,
-    pub price_usdc: u64,
-}
-
-#[event]
-pub struct Claimed {
-    pub user: Pubkey,
-    pub amount: u64,
-}
-
-#[event]
-pub struct AdminUsdcWithdrawn {
-    pub to: Pubkey,
-    pub amount: u64,
-}
-
-#[event]
-pub struct PauseToggled {
-    pub paused: bool,
-}
-
-/* ---------------- Errors ---------------- */
-
-#[error_code]
-pub enum ErrorCode {
-    #[msg("Invalid schedule configuration")]
-    InvalidConfig,
-    #[msg("Amount must be > 0")]
-    ZeroAmount,
-    #[msg("Insufficient pool balance")]
-    InsufficientPoolBalance,
-    #[msg("Math overflow")]
-    MathOverflow,
-    #[msg("Subscription still locked")]
-    StillLocked,
-    #[msg("Already fully claimed or nothing new to claim")]
-    NothingToClaim,
-    #[msg("Not claimed yet")]
-    NotClaimed,
-    #[msg("Account mismatch")]
-    WrongClaimAccount,
-    #[msg("Unauthorized")]
-    Unauthorized,
-    #[msg("Subscriptions are paused")]
-    Paused,
 }
