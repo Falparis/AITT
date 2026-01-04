@@ -13,7 +13,7 @@ services:
       - UPLOAD_BASE_DIR=/usr/src/app/uploads
       - CERT_UPLOAD_DIR=certificates
       - APP_PUBLIC_BASE_URL=https://soroban-backend.duckdns.org
-
+ 
     volumes:
       - /var/www/app2/uploads:/usr/src/app/uploads:rw
  
