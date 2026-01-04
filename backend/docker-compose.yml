@@ -16,7 +16,7 @@ services:
 
     volumes:
       - /var/www/app2/uploads:/usr/src/app/uploads:rw
-
+ 
     networks:
       - deploy_default
     expose:
