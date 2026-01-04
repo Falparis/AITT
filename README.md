@@ -92,7 +92,7 @@ npm start
 * **Frontend:** React, JWT, TailwindCSS
 * **Hashing:** SHA-256
 * **Auth:** Role-based JWT
-
+ 
 
 ## 🪪 License
 
