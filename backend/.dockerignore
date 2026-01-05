@@ -14,4 +14,3 @@ coverage
 tests
 *.log
 docker-compose*.yml
- 

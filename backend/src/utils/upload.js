@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
-const UPLOAD_BASE_DIR = process.env.UPLOAD_BASE_DIR || '/var/www/app2/uploads';
+const UPLOAD_BASE_DIR = process.env.UPLOAD_BASE_DIR || '/data';
 const CERT_UPLOAD_DIR = process.env.CERT_UPLOAD_DIR || 'certificates';
 const DEST_DIR = path.join(UPLOAD_BASE_DIR, CERT_UPLOAD_DIR);
 

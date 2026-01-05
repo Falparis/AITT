@@ -12,8 +12,19 @@ COPY . .
 
 # ---------- Run ----------
 FROM base AS runner
-# drop privileges
-USER node
+WORKDIR /app
+
+# Copy app files while still root
 COPY --from=builder /app ./
+
+# Create a non-root user and switch to it
+RUN mkdir -p /data && chown -R node:node /data
+
+# Copy app files
+COPY --from=builder --chown=node:node /app ./
+
+# Drop privileges to the non-root 'node' user
+USER node
+
 EXPOSE 4000
 CMD ["npm", "start"]

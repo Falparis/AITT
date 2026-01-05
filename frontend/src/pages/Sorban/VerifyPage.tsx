@@ -80,7 +80,11 @@ const VerifyPage: React.FC =  ()  => {
                 if(res.data.issued){
                     setResMsg("Verification successful.")
                     setVerificationStatus("success");
-                }else{
+                }else if(res.data.issued == false && res.data.success){
+                    setResMsg("Document not found.")
+                    setVerificationStatus("failure");
+                }
+                else{
                     setResMsg("Verification Failed")
                     setVerificationStatus("failure");
                 }
@@ -106,7 +110,7 @@ const VerifyPage: React.FC =  ()  => {
         //     <main className="flex-grow py-12 px-4">
         //         <div className="container mx-auto">
                     <div className="mx-auto">
-                        <Label htmlFor="inputTwo" className='text-3xl md:text-4xl font-heading font-bold text-center mb-8'>{(role == "super_admin" || role == "regulator_admin") ? "Upload/Verify Documnents" : "Verify Documnents"}</Label>
+                        <Label htmlFor="inputTwo" className='text-3xl md:text-4xl font-heading font-bold text-center mb-8'>{(role == "super_admin" || role == "regulator_admin") ? "Documents" : "Documents"}</Label>
 
                         <div className=" rounded-lg shadow-md overflow-hidden mb-12 border border-[#80808060]">
                             <div className="p-6">
@@ -188,7 +192,7 @@ const VerifyPage: React.FC =  ()  => {
                                 </div>
                             </div>
 
-                            <div className='flex flex-col items-start justify-center p-6 min-w-full'>
+                            {(role == "super_admin" || role == "regulator_admin") && <div className='flex flex-col items-start justify-center p-6 min-w-full'>
                                 <div className='min-w-full'>
                                     <Label htmlFor="inputTwo">Certificate Name{error.name != "" && <span className='text-red-500'>*</span>}</Label>
                                     <Input type="text" id="inputTwo" placeholder="Test" className='min-w-full' value={data?.name} onChange={(e)=>{
@@ -203,10 +207,10 @@ const VerifyPage: React.FC =  ()  => {
                                         setError(prev => ({...prev,subject: ""}));
                                     }}/>
                                 </div>
-                            </div>
+                            </div>}
                             <div className='w-full p-6 flex items-end justify-end gap-4'>
                                 <button onClick={() => handleVerify("verify")} className="border border-gray-900 hover:bg-gray-700 hover:text-gray-25 dark:bg-gray-700 dark:text-gray-25 dark:hover:bg-gray-50 dark:hover:text-gray-700 rounded-[6px] py-[0.75rem] px-[1.5rem] font-semibold transition-all inline-block text-center hover:cursor-pointer">
-                                    Verify
+                                    {(role == "super_admin" || role == "regulator_admin") ? "Verify" : "Submit"}
                                 </button>
                                 {(role == "super_admin" || role == "regulator_admin")  && <button onClick={() =>{
                                     let error;
@@ -221,7 +225,7 @@ const VerifyPage: React.FC =  ()  => {
                                     if(error == true) return; 
                                     handleVerify("upload");
                                 }} className="border border-gray-900 hover:bg-gray-700 hover:text-gray-25 dark:bg-gray-700 dark:text-gray-25 dark:hover:bg-gray-50 dark:hover:text-gray-700 rounded-[6px] py-[0.75rem] px-[1.5rem] font-semibold transition-all inline-block text-center hover:cursor-pointer">
-                                    Add
+                                    Upload
                                 </button>}
                             </div>
                         </div>

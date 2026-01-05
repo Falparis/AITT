@@ -13,7 +13,13 @@ const fs = require('fs');
 const app = express();
 
 app.use(helmet());
-app.use(cors());
+// Configure CORS to only allow requests from our frontend domain
+app.use(cors({
+  origin: ['https://aitt-transparency.com','http://localhost:5173','http://localhost:4173'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'Origin', 'X-Requested-With']
+}));
 app.use(express.json({ limit: '5mb' }));
 app.use(morgan('combined', { stream: logger.stream }));
 app.set('trust proxy', 1);

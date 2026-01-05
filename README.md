@@ -35,10 +35,12 @@ This project enables **uploading, storing, and verifying file hashes (SHA-256)**
 * 🧾 File Hashing (SHA-256) and On-Chain Storage
 * 🔍 Public File Verification by Hash
 * 👨‍💼 Admin Dashboard for Role Promotion and Management
-* 💾 Local/Cloud File Storage
+* 💾 **Persistent File Storage:** Secure local storage on VPS via Docker volumes.
 * ⚙️ Smart Contract Integration via Backend Signing
+* 🚀 **Automated CI/CD:** Full pipeline from GitHub to Production.
+* 🔒 **Auto-SSL:** Automatic HTTPS provisioning via Let's Encrypt.
 
-## ⚙️ Setup
+## ⚙️ Setup (Local Development)
 
 ### 1. Clone Repository
 
@@ -73,9 +75,26 @@ cd frontend
 npm start
 ```
 
+## 🚢 Deployment & Infrastructure (Production)
+
+The project utilizes a robust **Docker-based** infrastructure with a fully automated **CI/CD pipeline**.
+
+### Architecture
+* **Containerization:** Frontend (Nginx static serve) and Backend (Node.js) are built as Docker images and stored in **GitHub Container Registry (GHCR)**.
+* **Reverse Proxy:** Uses `nginx-proxy` and `acme-companion` to automatically route traffic and manage SSL certificates.
+* **Persistence:** Uploaded documents are stored on the host VPS (`/uploads`) and mounted into the backend container (`/data`) to ensure data persists across deployments.
+
+### CI/CD Workflow (GitHub Actions)
+1.  **Build:** Commits to `main` trigger parallel builds for Frontend and Backend.
+2.  **Publish:** Optimized images are pushed to GHCR.
+3.  **Deploy:** The pipeline securely connects to the VPS via SSH to:
+    *   Update the `docker-compose.yml` configuration.
+    *   Apply per-vhost Nginx settings (e.g., upload limits).
+    *   Pull new images and restart containers with zero-downtime logic (where applicable).
+
 ## 🔗 Smart Contract Details
 
-* **Contract ID:** `CBOCCS4EYS5WV273UJRHBM6QN4NGBV5Y4EGKON3UYBBEQ62LVHV3ZMLS`
+* **Contract ID:** `CC4PAMOJ75KHHK75D7XGJ4FDLNE27L674W5CUNRKTH4BMGARXR6QMQU7`
 
 ## 🧠 Roles Overview
 
@@ -90,10 +109,12 @@ npm start
 * **Smart Contract:** Soroban (Rust)
 * **Backend:** Node.js, Express, MongoDB
 * **Frontend:** React, JWT, TailwindCSS
+* **Infrastructure:** Docker, Docker Compose, Nginx Proxy, Let's Encrypt
+* **CI/CD:** GitHub Actions, GHCR
 * **Hashing:** SHA-256
 * **Auth:** Role-based JWT
  
 
 ## 🪪 License
 
-This project is licensed under the **MIT License**. 
+This project is licensed under the **MIT License**.
